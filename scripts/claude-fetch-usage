@@ -1,0 +1,114 @@
+#!/bin/bash
+# 使用 tmux 自动获取 Claude Code /usage 信息
+
+OUTPUT_FILE="$HOME/.claude/usage-limit.txt"
+LOCK_FILE="/tmp/claude-fetch-usage.lock"
+SESSION_NAME="claude_usage_fetch"
+LOG_FILE="/tmp/claude_usage_tmux.log"
+
+# 防止并发
+if [ -f "$LOCK_FILE" ]; then
+    pid=$(cat "$LOCK_FILE" 2>/dev/null)
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        echo "Already running"
+        exit 0
+    fi
+fi
+echo $$ > "$LOCK_FILE"
+trap "rm -f $LOCK_FILE; tmux kill-session -t $SESSION_NAME 2>/dev/null" EXIT
+
+# 清理旧会话
+tmux kill-session -t "$SESSION_NAME" 2>/dev/null
+rm -f "$LOG_FILE"
+
+# 创建新的 tmux 会话
+tmux new-session -d -s "$SESSION_NAME" -x 120 -y 30
+tmux pipe-pane -t "$SESSION_NAME" -o "cat >> $LOG_FILE"
+
+# 启动 claude
+tmux send-keys -t "$SESSION_NAME" "cd ~ && claude --no-chrome" Enter
+
+echo "Waiting for Claude to start..."
+
+# 等待并处理对话框
+for i in {1..8}; do
+    sleep 2
+    tmux send-keys -t "$SESSION_NAME" Enter
+    if grep -q "Claude Code.*v[0-9]" "$LOG_FILE" 2>/dev/null; then
+        echo "Claude started"
+        break
+    fi
+done
+
+sleep 2
+
+# 发送 /usage 命令
+echo "Sending /usage command..."
+tmux send-keys -t "$SESSION_NAME" "/usage"
+sleep 1
+tmux send-keys -t "$SESSION_NAME" Enter
+sleep 1
+tmux send-keys -t "$SESSION_NAME" Enter
+
+# 等待 usage 显示
+sleep 8
+
+# 按 Escape 关闭弹窗
+tmux send-keys -t "$SESSION_NAME" Escape
+sleep 1
+
+# 退出
+echo "Exiting..."
+tmux send-keys -t "$SESSION_NAME" "/exit" Enter
+sleep 2
+
+# 解析日志
+echo "Parsing output..."
+
+if [ -f "$LOG_FILE" ]; then
+    # 清理 ANSI 转义码
+    cleaned=$(cat "$LOG_FILE" | \
+        perl -pe 's/\e\[[0-9;]*[mGKHJABCDEFsu]//g' | \
+        perl -pe 's/\e\][^\a\e]*[\a\e\\\\]//g' | \
+        perl -pe 's/\e\[[\?0-9;]*[hlc]//g' | \
+        perl -pe 's/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]//g' | \
+        tr -d '\r')
+
+    echo "$cleaned" > /tmp/claude_usage_debug.txt
+
+    # 提取 usage 信息 - 查找包含 % used 或 Resets 的行
+    session_used=$(echo "$cleaned" | grep -oE "[0-9]+% used" | head -1)
+    session_reset=$(echo "$cleaned" | grep -oE "Resets [0-9]+:[0-9]+[ap]m" | head -1)
+    week_used=$(echo "$cleaned" | grep -A1 "Current week" | grep -oE "[0-9]+% used" | head -1)
+    week_reset=$(echo "$cleaned" | grep -oE "Resets (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]+" | head -1)
+
+    if [ -n "$session_used" ] || [ -n "$week_used" ]; then
+        # 格式化输出
+        result=""
+        if [ -n "$session_used" ]; then
+            result="Session: $session_used"
+            [ -n "$session_reset" ] && result="$result ($session_reset)"
+        fi
+        if [ -n "$week_used" ]; then
+            [ -n "$result" ] && result="$result | "
+            result="${result}Week: $week_used"
+            [ -n "$week_reset" ] && result="$result ($week_reset)"
+        fi
+
+        echo "$result" > "$OUTPUT_FILE"
+        echo "---" >> "$OUTPUT_FILE"
+        echo "Updated: $(date '+%Y-%m-%d %H:%M')" >> "$OUTPUT_FILE"
+
+        echo ""
+        echo "=== Success! ==="
+        cat "$OUTPUT_FILE"
+    else
+        echo "No usage info found"
+        echo ""
+        echo "=== Debug: searching for % used ==="
+        grep -i "% used\|Resets\|Current" /tmp/claude_usage_debug.txt | head -20
+    fi
+fi
+
+# 清理
+tmux kill-session -t "$SESSION_NAME" 2>/dev/null

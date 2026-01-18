@@ -1,0 +1,25 @@
+#!/bin/bash
+# 手动设置 Claude usage 信息
+# 用法: claude-usage-set "Pro plan | 45% used | resets in 3 days"
+
+USAGE_FILE="$HOME/.claude/usage-limit.txt"
+
+if [ -z "$1" ]; then
+    echo "用法: claude-usage-set \"<usage info>\""
+    echo ""
+    echo "示例:"
+    echo "  claude-usage-set \"Pro | 45% | 3d reset\""
+    echo "  claude-usage-set \"Max | 80% used\""
+    echo ""
+    echo "在 Claude Code 中运行 /usage 后，复制关键信息运行此命令"
+    echo ""
+    echo "当前保存的信息:"
+    cat "$USAGE_FILE" 2>/dev/null || echo "  (无)"
+    exit 0
+fi
+
+# 保存信息
+echo "$1" > "$USAGE_FILE"
+echo "$(date '+%Y-%m-%d %H:%M')" >> "$USAGE_FILE"
+
+echo "已保存: $1"

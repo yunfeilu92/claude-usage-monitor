@@ -1,0 +1,15 @@
+#!/bin/bash
+# iTerm2 Status Bar - Claude Code Usage
+
+LIMIT_FILE="$HOME/.claude/usage-limit.txt"
+
+# 获取 limit 信息
+if [[ -f "$LIMIT_FILE" ]]; then
+    limit_info=$(head -1 "$LIMIT_FILE" 2>/dev/null)
+    if [[ -n "$limit_info" ]]; then
+        echo "Claude: $limit_info"
+        exit 0
+    fi
+fi
+
+echo "Claude: --"

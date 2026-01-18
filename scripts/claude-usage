@@ -1,0 +1,241 @@
+#!/bin/bash
+# Claude Code Usage Monitor
+# 显示 Claude Code 的实时使用统计
+
+set -e
+
+STATS_FILE="$HOME/.claude/stats-cache.json"
+TODAY=$(date +%Y-%m-%d)
+
+# 颜色定义
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+DIM='\033[2m'
+NC='\033[0m' # No Color
+
+usage() {
+    echo "Usage: claude-usage [OPTIONS]"
+    echo ""
+    echo "Options:"
+    echo "  -s, --short     简洁模式 (一行输出，适合 statusline)"
+    echo "  -d, --detailed  详细统计"
+    echo "  -w, --watch     实时监控 (每5秒刷新)"
+    echo "  -j, --json      JSON 输出"
+    echo "  -t, --today     只显示今日统计"
+    echo "  -h, --help      显示帮助"
+    echo ""
+    echo "Examples:"
+    echo "  claude-usage           # 默认显示"
+    echo "  claude-usage -s        # 简洁模式"
+    echo "  claude-usage -w        # 实时监控"
+    echo "  watch -n 5 claude-usage -s  # 配合 watch 使用"
+}
+
+check_file() {
+    if [[ ! -f "$STATS_FILE" ]]; then
+        echo "Error: Stats file not found at $STATS_FILE"
+        exit 1
+    fi
+}
+
+format_tokens() {
+    local tokens=$1
+    if [[ $tokens -ge 1000000 ]]; then
+        printf "%.1fM" $(echo "scale=1; $tokens/1000000" | bc)
+    elif [[ $tokens -ge 1000 ]]; then
+        printf "%.1fK" $(echo "scale=1; $tokens/1000" | bc)
+    else
+        echo "$tokens"
+    fi
+}
+
+get_today_stats() {
+    local data=$(cat "$STATS_FILE")
+
+    # 获取今日活动数据
+    local today_activity=$(echo "$data" | jq -r ".dailyActivity[] | select(.date == \"$TODAY\")")
+    local today_tokens=$(echo "$data" | jq -r ".dailyModelTokens[] | select(.date == \"$TODAY\")")
+
+    if [[ -z "$today_activity" || "$today_activity" == "null" ]]; then
+        TODAY_MESSAGES=0
+        TODAY_SESSIONS=0
+        TODAY_TOOLS=0
+    else
+        TODAY_MESSAGES=$(echo "$today_activity" | jq -r '.messageCount // 0')
+        TODAY_SESSIONS=$(echo "$today_activity" | jq -r '.sessionCount // 0')
+        TODAY_TOOLS=$(echo "$today_activity" | jq -r '.toolCallCount // 0')
+    fi
+
+    if [[ -z "$today_tokens" || "$today_tokens" == "null" ]]; then
+        TODAY_TOKENS=0
+        TODAY_OPUS=0
+        TODAY_SONNET=0
+    else
+        TODAY_OPUS=$(echo "$today_tokens" | jq -r '.tokensByModel["claude-opus-4-5-20251101"] // 0')
+        TODAY_SONNET=$(echo "$today_tokens" | jq -r '.tokensByModel["claude-sonnet-4-5-20250929"] // 0')
+        TODAY_TOKENS=$((TODAY_OPUS + TODAY_SONNET))
+    fi
+}
+
+get_total_stats() {
+    local data=$(cat "$STATS_FILE")
+
+    TOTAL_SESSIONS=$(echo "$data" | jq -r '.totalSessions // 0')
+    TOTAL_MESSAGES=$(echo "$data" | jq -r '.totalMessages // 0')
+
+    # 总 tokens
+    OPUS_INPUT=$(echo "$data" | jq -r '.modelUsage["claude-opus-4-5-20251101"].inputTokens // 0')
+    OPUS_OUTPUT=$(echo "$data" | jq -r '.modelUsage["claude-opus-4-5-20251101"].outputTokens // 0')
+    OPUS_CACHE_READ=$(echo "$data" | jq -r '.modelUsage["claude-opus-4-5-20251101"].cacheReadInputTokens // 0')
+    OPUS_CACHE_CREATE=$(echo "$data" | jq -r '.modelUsage["claude-opus-4-5-20251101"].cacheCreationInputTokens // 0')
+
+    SONNET_INPUT=$(echo "$data" | jq -r '.modelUsage["claude-sonnet-4-5-20250929"].inputTokens // 0')
+    SONNET_OUTPUT=$(echo "$data" | jq -r '.modelUsage["claude-sonnet-4-5-20250929"].outputTokens // 0')
+    SONNET_CACHE_READ=$(echo "$data" | jq -r '.modelUsage["claude-sonnet-4-5-20250929"].cacheReadInputTokens // 0')
+    SONNET_CACHE_CREATE=$(echo "$data" | jq -r '.modelUsage["claude-sonnet-4-5-20250929"].cacheCreationInputTokens // 0')
+
+    FIRST_SESSION=$(echo "$data" | jq -r '.firstSessionDate // "N/A"' | cut -d'T' -f1)
+}
+
+show_short() {
+    get_today_stats
+
+    local tokens_fmt=$(format_tokens $TODAY_TOKENS)
+    local opus_fmt=$(format_tokens $TODAY_OPUS)
+    local sonnet_fmt=$(format_tokens $TODAY_SONNET)
+
+    # 简洁一行输出
+    if [[ $TODAY_OPUS -gt 0 && $TODAY_SONNET -gt 0 ]]; then
+        echo -e "${CYAN}Claude${NC} ${BOLD}${tokens_fmt}${NC} tok ${DIM}(O:${opus_fmt} S:${sonnet_fmt})${NC} | ${TODAY_MESSAGES} msg | ${TODAY_TOOLS} tools"
+    elif [[ $TODAY_OPUS -gt 0 ]]; then
+        echo -e "${CYAN}Claude${NC} ${BOLD}${tokens_fmt}${NC} tok ${DIM}(Opus)${NC} | ${TODAY_MESSAGES} msg | ${TODAY_TOOLS} tools"
+    elif [[ $TODAY_SONNET -gt 0 ]]; then
+        echo -e "${CYAN}Claude${NC} ${BOLD}${tokens_fmt}${NC} tok ${DIM}(Sonnet)${NC} | ${TODAY_MESSAGES} msg | ${TODAY_TOOLS} tools"
+    else
+        echo -e "${CYAN}Claude${NC} ${DIM}No usage today${NC}"
+    fi
+}
+
+show_today() {
+    get_today_stats
+
+    echo -e "${BOLD}${CYAN}━━━ Claude Code Usage ($TODAY) ━━━${NC}"
+    echo ""
+    echo -e "  ${BOLD}Tokens:${NC}    $(format_tokens $TODAY_TOKENS)"
+    if [[ $TODAY_OPUS -gt 0 ]]; then
+        echo -e "    ${DIM}├─ Opus:${NC}   $(format_tokens $TODAY_OPUS)"
+    fi
+    if [[ $TODAY_SONNET -gt 0 ]]; then
+        echo -e "    ${DIM}└─ Sonnet:${NC} $(format_tokens $TODAY_SONNET)"
+    fi
+    echo -e "  ${BOLD}Messages:${NC}  $TODAY_MESSAGES"
+    echo -e "  ${BOLD}Sessions:${NC}  $TODAY_SESSIONS"
+    echo -e "  ${BOLD}Tools:${NC}     $TODAY_TOOLS"
+}
+
+show_detailed() {
+    get_today_stats
+    get_total_stats
+
+    echo -e "${BOLD}${CYAN}╔════════════════════════════════════════╗${NC}"
+    echo -e "${BOLD}${CYAN}║       Claude Code Usage Statistics     ║${NC}"
+    echo -e "${BOLD}${CYAN}╚════════════════════════════════════════╝${NC}"
+    echo ""
+
+    echo -e "${BOLD}${YELLOW}📅 Today ($TODAY)${NC}"
+    echo -e "   Tokens:    $(format_tokens $TODAY_TOKENS)"
+    [[ $TODAY_OPUS -gt 0 ]] && echo -e "     └─ Opus:   $(format_tokens $TODAY_OPUS)"
+    [[ $TODAY_SONNET -gt 0 ]] && echo -e "     └─ Sonnet: $(format_tokens $TODAY_SONNET)"
+    echo -e "   Messages:  $TODAY_MESSAGES"
+    echo -e "   Sessions:  $TODAY_SESSIONS"
+    echo -e "   Tools:     $TODAY_TOOLS"
+    echo ""
+
+    echo -e "${BOLD}${GREEN}📊 All Time (since $FIRST_SESSION)${NC}"
+    echo -e "   Sessions:  $TOTAL_SESSIONS"
+    echo -e "   Messages:  $TOTAL_MESSAGES"
+    echo ""
+
+    echo -e "${BOLD}${BLUE}🤖 Model Usage${NC}"
+    echo -e "   ${BOLD}Opus 4.5:${NC}"
+    echo -e "     Input:        $(format_tokens $OPUS_INPUT)"
+    echo -e "     Output:       $(format_tokens $OPUS_OUTPUT)"
+    echo -e "     Cache Read:   $(format_tokens $OPUS_CACHE_READ)"
+    echo -e "     Cache Create: $(format_tokens $OPUS_CACHE_CREATE)"
+    echo ""
+    echo -e "   ${BOLD}Sonnet 4.5:${NC}"
+    echo -e "     Input:        $(format_tokens $SONNET_INPUT)"
+    echo -e "     Output:       $(format_tokens $SONNET_OUTPUT)"
+    echo -e "     Cache Read:   $(format_tokens $SONNET_CACHE_READ)"
+    echo -e "     Cache Create: $(format_tokens $SONNET_CACHE_CREATE)"
+}
+
+show_json() {
+    get_today_stats
+    get_total_stats
+
+    cat <<EOF
+{
+  "today": {
+    "date": "$TODAY",
+    "tokens": $TODAY_TOKENS,
+    "opus_tokens": $TODAY_OPUS,
+    "sonnet_tokens": $TODAY_SONNET,
+    "messages": $TODAY_MESSAGES,
+    "sessions": $TODAY_SESSIONS,
+    "tool_calls": $TODAY_TOOLS
+  },
+  "total": {
+    "sessions": $TOTAL_SESSIONS,
+    "messages": $TOTAL_MESSAGES,
+    "first_session": "$FIRST_SESSION"
+  }
+}
+EOF
+}
+
+watch_mode() {
+    while true; do
+        clear
+        echo -e "${DIM}Last update: $(date '+%H:%M:%S') (Ctrl+C to exit)${NC}"
+        echo ""
+        show_today
+        sleep 5
+    done
+}
+
+# 主逻辑
+check_file
+
+case "${1:-}" in
+    -s|--short)
+        show_short
+        ;;
+    -d|--detailed)
+        show_detailed
+        ;;
+    -w|--watch)
+        watch_mode
+        ;;
+    -j|--json)
+        show_json
+        ;;
+    -t|--today)
+        show_today
+        ;;
+    -h|--help)
+        usage
+        ;;
+    "")
+        show_today
+        ;;
+    *)
+        echo "Unknown option: $1"
+        usage
+        exit 1
+        ;;
+esac
