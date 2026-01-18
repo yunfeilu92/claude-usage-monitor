@@ -84,8 +84,8 @@ mkdir -p ~/.claude
 # Copy and customize the plist file
 cp launchagent/com.claude.usage-fetch.plist ~/Library/LaunchAgents/
 
-# Edit the plist to update your username (replace 'yunfeilu' with your username)
-sed -i '' "s/yunfeilu/$USER/g" ~/Library/LaunchAgents/com.claude.usage-fetch.plist
+# Edit the plist to update the home directory path
+sed -i '' "s|__HOME__|$HOME|g" ~/Library/LaunchAgents/com.claude.usage-fetch.plist
 
 # Load the agent
 launchctl load ~/Library/LaunchAgents/com.claude.usage-fetch.plist

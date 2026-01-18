@@ -6,7 +6,7 @@
     <string>com.claude.usage-fetch</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/yunfeilu/.local/bin/claude-fetch-usage</string>
+        <string>__HOME__/.local/bin/claude-fetch-usage</string>
     </array>
     <key>StartInterval</key>
     <integer>60</integer>
@@ -21,7 +21,7 @@
         <key>PATH</key>
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
         <key>HOME</key>
-        <string>/Users/yunfeilu</string>
+        <string>__HOME__</string>
     </dict>
 </dict>
 </plist>

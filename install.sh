@@ -21,7 +21,7 @@ echo "✓ Scripts installed to ~/.local/bin/"
 # Install LaunchAgent
 PLIST_FILE=~/Library/LaunchAgents/com.claude.usage-fetch.plist
 cp launchagent/com.claude.usage-fetch.plist "$PLIST_FILE"
-sed -i '' "s/yunfeilu/$USER/g" "$PLIST_FILE"
+sed -i '' "s|__HOME__|$HOME|g" "$PLIST_FILE"
 
 # Load LaunchAgent
 launchctl unload "$PLIST_FILE" 2>/dev/null || true
